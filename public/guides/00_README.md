@@ -25,6 +25,7 @@ The intended same-day output is **Workshop Proceedings v0.9**, not an automatica
 | `09_EDITORIAL_REVIEW_AND_ACCEPTANCE_STANDARD.md` | Provides acceptance gates, rubric, correction and versioning rules. |
 | `10_FACILITATOR_IMPLEMENTATION_GUIDE.md` | Explains preparation, allocation, live-room management and post-workshop editing. |
 | `11_SOURCE_REGISTER.md` | Records the external standards, how they were adapted and their limits. |
+| `12_WORKSHOP_OPERATIONS_AND_INCIDENT_PLAYBOOK.md` | Defines the public/private boundary, lifecycle controls, incident recovery and end-of-day reconciliation. |
 
 ## Non-negotiable method
 
@@ -60,5 +61,4 @@ Compile v0.9, complete the editorial review, obtain final author confirmation, r
 ## Authority and local policy
 
 This kit is a teaching and editorial framework, not legal advice. Institutional policy, research-ethics requirements, applicable law, platform terms, publisher rules and the final editor’s decisions take precedence. Tool capabilities and policies can change; recheck them before delivery.
-
 

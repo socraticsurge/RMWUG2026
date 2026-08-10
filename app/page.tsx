@@ -1,17 +1,27 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import { agentContract, agentStages, workOrder } from "./data/agentInstructions";
 import { sectionColours, topics, topicSections } from "./data/topics";
 
-type View = "overview" | "study" | "topics" | "agents" | "facilitator" | "publishing";
+type View = "overview" | "study" | "topics" | "agents" | "publishing";
 
-type Student = {
-  id: string;
+type Assignment = {
+  studentId: string;
   name: string;
-  email: string;
   pod: string;
-  topicId?: string;
+  section: string;
+  topicId: string;
+  question: string;
+  peers: { id: string; name: string }[];
+  forms: FormLinks;
+};
+
+type LookupResponse = {
+  ok: boolean;
+  code: string;
+  message: string;
+  assignment?: Assignment;
 };
 
 type FormLinks = {
@@ -25,7 +35,6 @@ const views: { id: View; label: string }[] = [
   { id: "study", label: "My study" },
   { id: "topics", label: "Topic bank" },
   { id: "agents", label: "Agent guide" },
-  { id: "facilitator", label: "Facilitator" },
   { id: "publishing", label: "Publishing" },
 ];
 
@@ -45,125 +54,9 @@ const defaultForms: FormLinks = {
   submission: "https://docs.google.com/forms/d/e/1FAIpQLSf4s5QnAU_x-yiwuY0lTenzY8gml570-_CHz_cDDjlB_1c3eQ/viewform",
 };
 
-function makePlaceholderRoster(count = 80, podSize = 5): Student[] {
-  return Array.from({ length: count }, (_, index) => ({
-    id: `S${String(index + 1).padStart(3, "0")}`,
-    name: `Student ${String(index + 1).padStart(3, "0")}`,
-    email: `student${String(index + 1).padStart(3, "0")}@placeholder.invalid`,
-    pod: `P${String(Math.floor(index / podSize) + 1).padStart(2, "0")}`,
-  }));
-}
-
-function hashSeed(value: string) {
-  let hash = 2166136261;
-  for (let i = 0; i < value.length; i += 1) {
-    hash ^= value.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
-}
-
-function seededRandom(seed: string) {
-  let value = hashSeed(seed) || 1;
-  return () => {
-    value += 0x6d2b79f5;
-    let result = value;
-    result = Math.imul(result ^ (result >>> 15), result | 1);
-    result ^= result + Math.imul(result ^ (result >>> 7), result | 61);
-    return ((result ^ (result >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function shuffle<T>(items: T[], random: () => number): T[] {
-  const result = [...items];
-  for (let index = result.length - 1; index > 0; index -= 1) {
-    const swap = Math.floor(random() * (index + 1));
-    [result[index], result[swap]] = [result[swap], result[index]];
-  }
-  return result;
-}
-
-function csvCell(value: string | number | undefined) {
-  return `"${String(value ?? "").replaceAll('"', '""')}"`;
-}
-
-function downloadText(filename: string, text: string, type = "text/plain") {
-  const blob = new Blob([text], { type });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
-function parseCsv(text: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cell = "";
-  let quoted = false;
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-    const next = text[index + 1];
-    if (char === '"' && quoted && next === '"') {
-      cell += '"';
-      index += 1;
-    } else if (char === '"') {
-      quoted = !quoted;
-    } else if (char === "," && !quoted) {
-      row.push(cell.trim());
-      cell = "";
-    } else if ((char === "\n" || char === "\r") && !quoted) {
-      if (char === "\r" && next === "\n") index += 1;
-      row.push(cell.trim());
-      if (row.some(Boolean)) rows.push(row);
-      row = [];
-      cell = "";
-    } else {
-      cell += char;
-    }
-  }
-  row.push(cell.trim());
-  if (row.some(Boolean)) rows.push(row);
-  return rows;
-}
-
-function packPods(
-  podGroups: { id: string; students: Student[] }[],
-  sectionCodes: string[],
-  random: () => number,
-) {
-  const randomized = shuffle(
-    podGroups.map((pod) => ({ ...pod, tie: random() })),
-    random,
-  ).sort((a, b) => b.students.length - a.students.length || a.tie - b.tie);
-  const bins = shuffle(sectionCodes, random).map((code) => ({
-    code,
-    remaining: 10,
-    pods: [] as typeof randomized,
-  }));
-
-  function place(index: number): boolean {
-    if (index === randomized.length) return true;
-    const pod = randomized[index];
-    const candidates = bins
-      .filter((bin) => bin.remaining >= pod.students.length)
-      .sort((a, b) => a.remaining - b.remaining);
-    const tried = new Set<number>();
-    for (const bin of candidates) {
-      if (tried.has(bin.remaining)) continue;
-      tried.add(bin.remaining);
-      bin.pods.push(pod);
-      bin.remaining -= pod.students.length;
-      if (place(index + 1)) return true;
-      bin.remaining += pod.students.length;
-      bin.pods.pop();
-    }
-    return false;
-  }
-
-  return place(0) ? bins : null;
-}
+// Set to the deployed Apps Script /exec URL. It contains no secret; access
+// codes are high-entropy bearer credentials stored only in the private Sheet.
+const lookupService = "";
 
 function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false);
@@ -199,235 +92,96 @@ function GuideLink({ file, children }: { file: string; children: React.ReactNode
   );
 }
 
+function jsonpLookup(endpoint: string, studentId: string, token: string): Promise<LookupResponse> {
+  return new Promise((resolve, reject) => {
+    const callbackName = `__rmwug_lookup_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const callbackWindow = window as unknown as Record<string, unknown>;
+    const script = document.createElement("script");
+    const timeout = window.setTimeout(() => cleanup(new Error("The assignment service did not respond in time.")), 15000);
+
+    function cleanup(error?: Error, result?: LookupResponse) {
+      window.clearTimeout(timeout);
+      script.remove();
+      delete callbackWindow[callbackName];
+      if (error) reject(error);
+      else if (result) resolve(result);
+    }
+
+    callbackWindow[callbackName] = (result: LookupResponse) => cleanup(undefined, result);
+    const url = new URL(endpoint);
+    url.searchParams.set("id", studentId);
+    url.searchParams.set("token", token);
+    url.searchParams.set("callback", callbackName);
+    script.src = url.toString();
+    script.async = true;
+    script.referrerPolicy = "no-referrer";
+    script.onerror = () => cleanup(new Error("The assignment service could not be reached."));
+    document.body.appendChild(script);
+  });
+}
+
 export default function Home() {
   const [view, setView] = useState<View>("overview");
-  const [roster, setRoster] = useState<Student[]>(() => makePlaceholderRoster());
-  const [forms, setForms] = useState<FormLinks>(defaultForms);
-  const [selectedId, setSelectedId] = useState("S001");
-  const [seed, setSeed] = useState("RMWUG2026-01");
-  const [podTarget, setPodTarget] = useState(5);
-  const [podPlan, setPodPlan] = useState(Array(16).fill("5").join(", "));
-  const [assignmentMessage, setAssignmentMessage] = useState("");
+  const [studentId, setStudentId] = useState("");
+  const [accessCode, setAccessCode] = useState("");
+  const [assignment, setAssignment] = useState<Assignment | null>(null);
+  const [lookupState, setLookupState] = useState<"idle" | "loading" | "error">("idle");
+  const [lookupMessage, setLookupMessage] = useState("");
   const [topicFilter, setTopicFilter] = useState("ALL");
-  const [studentSearch, setStudentSearch] = useState("");
-  const [readyGates, setReadyGates] = useState<Record<string, string[]>>({});
+  const [readyGates, setReadyGates] = useState<string[]>([]);
 
-  useEffect(() => {
-    const restore = window.setTimeout(() => {
-      try {
-        const savedRoster = window.localStorage.getItem("rmwug-roster");
-        const savedForms = window.localStorage.getItem("rmwug-forms");
-        const savedGates = window.localStorage.getItem("rmwug-ready-gates");
-        if (savedRoster) setRoster(JSON.parse(savedRoster));
-        if (savedForms) {
-          const parsedForms = JSON.parse(savedForms) as Partial<FormLinks>;
-          setForms({
-            onboarding: parsedForms.onboarding || defaultForms.onboarding,
-            milestone: parsedForms.milestone || defaultForms.milestone,
-            submission: parsedForms.submission || defaultForms.submission,
-          });
-        }
-        if (savedGates) setReadyGates(JSON.parse(savedGates));
-      } catch {
-        // A corrupt local prototype cache should never block the workshop UI.
+  const filteredTopics = useMemo(
+    () => topics.filter((topic) => topicFilter === "ALL" || topic.id.startsWith(topicFilter)),
+    [topicFilter],
+  );
+  const forms = assignment?.forms ?? defaultForms;
+
+  async function findAssignment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const normalizedId = studentId.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, "");
+    const normalizedCode = accessCode.trim().toUpperCase();
+    setAssignment(null);
+    setReadyGates([]);
+    if (!lookupService) {
+      setLookupState("error");
+      setLookupMessage("The private assignment register is being prepared. Your facilitator will announce when lookup opens.");
+      return;
+    }
+    if (!normalizedId || !normalizedCode) {
+      setLookupState("error");
+      setLookupMessage("Enter both the Student ID and access code printed on your personal card.");
+      return;
+    }
+    setLookupState("loading");
+    setLookupMessage("Checking the locked workshop register…");
+    try {
+      const result = await jsonpLookup(lookupService, normalizedId, normalizedCode);
+      if (!result.ok || !result.assignment) {
+        setLookupState("error");
+        setLookupMessage(result.message);
+        return;
       }
-    }, 0);
-    return () => window.clearTimeout(restore);
-  }, []);
-
-  useEffect(() => {
-    window.localStorage.setItem("rmwug-roster", JSON.stringify(roster));
-  }, [roster]);
-
-  useEffect(() => {
-    window.localStorage.setItem("rmwug-forms", JSON.stringify(forms));
-  }, [forms]);
-
-  useEffect(() => {
-    window.localStorage.setItem("rmwug-ready-gates", JSON.stringify(readyGates));
-  }, [readyGates]);
-
-  const topicById = useMemo(() => new Map(topics.map((topic) => [topic.id, topic])), []);
-  const selectedStudent = roster.find((student) => student.id === selectedId) ?? roster[0];
-  const selectedTopic = selectedStudent?.topicId ? topicById.get(selectedStudent.topicId) : undefined;
-  const podGroups = useMemo(() => {
-    const groups = new Map<string, Student[]>();
-    roster.forEach((student) => {
-      groups.set(student.pod, [...(groups.get(student.pod) ?? []), student]);
-    });
-    return [...groups.entries()]
-      .map(([id, students]) => ({ id, students }))
-      .sort((a, b) => a.id.localeCompare(b.id));
-  }, [roster]);
-  const assignedCount = roster.filter((student) => student.topicId).length;
-  const filteredTopics = topics.filter((topic) => topicFilter === "ALL" || topic.id.startsWith(topicFilter));
-  const filteredRoster = roster.filter((student) => {
-    const needle = studentSearch.toLowerCase();
-    return !needle || `${student.id} ${student.name} ${student.email} ${student.pod}`.toLowerCase().includes(needle);
-  });
-
-  function resetRoster() {
-    const next = makePlaceholderRoster(80, 5);
-    setRoster(next);
-    setPodTarget(5);
-    setPodPlan(Array(16).fill("5").join(", "));
-    setAssignmentMessage("Placeholder roster restored. No topics are assigned.");
+      setAssignment(result.assignment);
+      setAccessCode("");
+      setLookupState("idle");
+      setLookupMessage(result.message);
+    } catch (error) {
+      setLookupState("error");
+      setLookupMessage(error instanceof Error ? error.message : "The assignment service could not be reached.");
+    }
   }
 
-  function rebalancePods() {
-    const size = Math.max(2, Math.min(10, podTarget));
-    setRoster((current) =>
-      current.map((student, index) => ({
-        ...student,
-        pod: `P${String(Math.floor(index / size) + 1).padStart(2, "0")}`,
-        topicId: undefined,
-      })),
-    );
-    const sizes: number[] = [];
-    let remaining = roster.length;
-    while (remaining > 0) {
-      sizes.push(Math.min(size, remaining));
-      remaining -= size;
-    }
-    setPodPlan(sizes.join(", "));
-    setAssignmentMessage(`Rebalanced into ${sizes.length} pods. Review the last pod before assigning.`);
-  }
-
-  function applyPodPlan() {
-    const sizes = podPlan
-      .split(",")
-      .map((value) => Number(value.trim()))
-      .filter((value) => Number.isFinite(value));
-    const total = sizes.reduce((sum, size) => sum + size, 0);
-    if (!sizes.length || sizes.some((size) => !Number.isInteger(size) || size < 2 || size > 10)) {
-      setAssignmentMessage("Each pod size must be a whole number from 2 to 10.");
-      return;
-    }
-    if (total !== roster.length) {
-      setAssignmentMessage(`That plan accounts for ${total} students; the roster contains ${roster.length}.`);
-      return;
-    }
-    let cursor = 0;
-    setRoster((current) => {
-      const next = [...current];
-      sizes.forEach((size, podIndex) => {
-        for (let offset = 0; offset < size; offset += 1) {
-          next[cursor] = {
-            ...next[cursor],
-            pod: `P${String(podIndex + 1).padStart(2, "0")}`,
-            topicId: undefined,
-          };
-          cursor += 1;
-        }
-      });
-      return next;
-    });
-    setAssignmentMessage(`Applied ${sizes.length} custom pods. Topics were cleared for a fresh draw.`);
-  }
-
-  function assignTopics() {
-    if (roster.length > topics.length) {
-      setAssignmentMessage("The roster exceeds the 80 unique topics currently available.");
-      return;
-    }
-    if (podGroups.some((pod) => pod.students.length > 10)) {
-      setAssignmentMessage("A pod cannot exceed 10 students because each section contains 10 unique studies.");
-      return;
-    }
-    const random = seededRandom(seed.trim() || "RMWUG2026");
-    const bins = packPods(
-      podGroups,
-      topicSections.map((section) => section.code),
-      random,
-    );
-    if (!bins) {
-      setAssignmentMessage(
-        "These pod sizes cannot be fitted into eight ten-topic sections. Adjust the pod plan, then run the draw again.",
-      );
-      return;
-    }
-
-    const assignments = new Map<string, string>();
-    bins.forEach((bin) => {
-      const sectionTopics = shuffle(
-        topics.filter((topic) => topic.id.startsWith(bin.code)),
-        random,
-      );
-      const students = shuffle(bin.pods.flatMap((pod) => pod.students), random);
-      students.forEach((student, index) => assignments.set(student.id, sectionTopics[index].id));
-    });
-    setRoster((current) =>
-      current.map((student) => ({ ...student, topicId: assignments.get(student.id) })),
-    );
-    setAssignmentMessage(
-      `Assigned ${assignments.size} unique studies with seed “${seed.trim() || "RMWUG2026"}”. Save the CSV before changing the draw.`,
-    );
-  }
-
-  function exportAssignments() {
-    const header = ["student_id", "name", "email", "pod", "section", "topic_id", "research_question"];
-    const rows = roster.map((student) => {
-      const topic = student.topicId ? topicById.get(student.topicId) : undefined;
-      return [student.id, student.name, student.email, student.pod, topic?.section, topic?.id, topic?.question];
-    });
-    downloadText(
-      `RMWUG2026-assignments-${seed.replaceAll(/[^a-zA-Z0-9_-]/g, "-")}.csv`,
-      [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\n"),
-      "text/csv",
-    );
-  }
-
-  async function importRoster(file: File) {
-    const rows = parseCsv(await file.text());
-    if (rows.length < 2) {
-      setAssignmentMessage("The CSV has no roster rows.");
-      return;
-    }
-    const header = rows[0].map((cell) => cell.toLowerCase().replaceAll(" ", "_"));
-    const idIndex = header.indexOf("student_id");
-    const nameIndex = header.indexOf("name");
-    const emailIndex = header.indexOf("email");
-    if (nameIndex < 0 || emailIndex < 0) {
-      setAssignmentMessage("Use CSV columns: student_id, name, email. student_id may be blank.");
-      return;
-    }
-    const next = rows
-      .slice(1)
-      .filter((row) => row[nameIndex] || row[emailIndex])
-      .map((row, index) => ({
-        id: row[idIndex] || `S${String(index + 1).padStart(3, "0")}`,
-        name: row[nameIndex],
-        email: row[emailIndex],
-        pod: `P${String(Math.floor(index / 5) + 1).padStart(2, "0")}`,
-      }));
-    if (!next.length || next.length > 80) {
-      setAssignmentMessage("The roster must contain between 1 and 80 students.");
-      return;
-    }
-    setRoster(next);
-    setSelectedId(next[0].id);
-    setPodPlan(
-      Array.from({ length: Math.ceil(next.length / 5) }, (_, index) =>
-        String(Math.min(5, next.length - index * 5)),
-      ).join(", "),
-    );
-    setAssignmentMessage(`Imported ${next.length} students. Review pod sizes before assigning topics.`);
-  }
-
-  function clearAssignments() {
-    setRoster((current) => current.map((student) => ({ ...student, topicId: undefined })));
-    setAssignmentMessage("Assignments cleared. The roster and pod plan are unchanged.");
+  function forgetAssignment() {
+    setAssignment(null);
+    setStudentId("");
+    setAccessCode("");
+    setReadyGates([]);
+    setLookupMessage("This device no longer displays the previous assignment.");
+    setLookupState("idle");
   }
 
   function toggleReady(gate: string) {
-    if (!selectedStudent) return;
-    setReadyGates((current) => {
-      const studentGates = current[selectedStudent.id] ?? [];
-      const next = studentGates.includes(gate)
-        ? studentGates.filter((value) => value !== gate)
-        : [...studentGates, gate];
-      return { ...current, [selectedStudent.id]: next };
-    });
+    setReadyGates((current) => current.includes(gate) ? current.filter((value) => value !== gate) : [...current, gate]);
   }
 
   return (
@@ -442,12 +196,7 @@ export default function Home() {
         </button>
         <nav aria-label="Workshop sections">
           {views.map((item) => (
-            <button
-              type="button"
-              key={item.id}
-              className={view === item.id ? "active" : ""}
-              onClick={() => setView(item.id)}
-            >
+            <button type="button" key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}>
               {item.label}
             </button>
           ))}
@@ -467,7 +216,7 @@ export default function Home() {
               </p>
               <div className="hero-actions">
                 <button className="button primary" type="button" onClick={() => setView("study")}>Open my study</button>
-                <button className="text-link" type="button" onClick={() => setView("facilitator")}>Facilitator control room →</button>
+                <GuideLink file="12_WORKSHOP_OPERATIONS_AND_INCIDENT_PLAYBOOK.md">Workshop journey</GuideLink>
               </div>
             </div>
             <div className="hero-diagram" aria-label="Workshop operating model">
@@ -492,18 +241,14 @@ export default function Home() {
           </div>
 
           <div className="section-heading">
-            <div>
-              <p className="eyebrow">The workshop spine</p>
-              <h2>Seven gates prevent one impressive-looking mistake.</h2>
-            </div>
+            <div><p className="eyebrow">The workshop spine</p><h2>Seven gates prevent one impressive-looking mistake.</h2></div>
             <p>Advance only after the evidence at the current gate is inspectable by your pod.</p>
           </div>
           <div className="gate-grid">
             {gates.map(([id, title, description], index) => (
               <article className="gate-card" key={id}>
                 <div className="gate-top"><span>{id}</span><small>0{index + 1}</small></div>
-                <h3>{title}</h3>
-                <p>{description}</p>
+                <h3>{title}</h3><p>{description}</p>
               </article>
             ))}
           </div>
@@ -513,49 +258,57 @@ export default function Home() {
       {view === "study" && (
         <section className="view">
           <div className="section-heading study-heading">
-            <div>
-              <p className="eyebrow">Student workbench</p>
-              <h1>Find your assignment. Keep your evidence visible.</h1>
-            </div>
-            <label className="student-picker">
-              Student ID
-              <input
-                value={selectedId}
-                list="student-ids"
-                onChange={(event) => setSelectedId(event.target.value.toUpperCase())}
-                placeholder="S001"
-              />
-              <datalist id="student-ids">
-                {roster.map((student) => <option key={student.id} value={student.id}>{student.name}</option>)}
-              </datalist>
-            </label>
+            <div><p className="eyebrow">Student workbench</p><h1>Load one assignment. Keep your evidence visible.</h1></div>
+            {assignment && <button className="text-link" type="button" onClick={forgetAssignment}>Forget this assignment</button>}
           </div>
 
-          {!selectedStudent ? (
-            <div className="notice warning">No student matches that ID. Check the roster or ask the facilitator.</div>
-          ) : (
+          {!assignment && (
+            <div className="lookup-layout">
+              <form className="lookup-card" onSubmit={findAssignment}>
+                <p className="eyebrow">Personal access</p>
+                <h2>Use the card issued to you</h2>
+                <p>The Student ID and access code are checked against the facilitator&apos;s locked register. They are not stored by this page.</p>
+                <label>Student ID<input value={studentId} onChange={(event) => setStudentId(event.target.value.toUpperCase())} autoComplete="username" placeholder="S001" /></label>
+                <label>Access code<input value={accessCode} onChange={(event) => setAccessCode(event.target.value.toUpperCase())} autoComplete="one-time-code" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" /></label>
+                <button className="button primary" type="submit" disabled={lookupState === "loading"}>{lookupState === "loading" ? "Checking…" : "Load my study"}</button>
+                {lookupMessage && <div className={`notice ${lookupState === "error" ? "warning" : "status"}`} role="status">{lookupMessage}</div>}
+              </form>
+              <aside className="access-rules">
+                <p className="eyebrow">Workshop safety</p>
+                <h2>One card. One author. One assignment.</h2>
+                <ol>
+                  <li>Do not share or photograph another student&apos;s access code.</li>
+                  <li>The assignment shown here—not a screenshot or verbal swap—is authoritative.</li>
+                  <li>If a code is lost or exposed, ask the facilitator to rotate only that code.</li>
+                  <li>On a shared computer, use “Forget this assignment” before leaving.</li>
+                </ol>
+                <ExternalAction href={defaultForms.onboarding}>Confirm my details</ExternalAction>
+              </aside>
+            </div>
+          )}
+
+          {assignment && (
             <>
               <div className="study-summary">
                 <article className="identity-card">
-                  <p className="eyebrow">Researcher</p>
-                  <h2>{selectedStudent.name}</h2>
+                  <p className="eyebrow">Researcher</p><h2>{assignment.name}</h2>
                   <dl>
-                    <div><dt>Student ID</dt><dd>{selectedStudent.id}</dd></div>
-                    <div><dt>Peer pod</dt><dd>{selectedStudent.pod}</dd></div>
-                    <div><dt>Assignment</dt><dd>{selectedStudent.topicId ?? "Pending draw"}</dd></div>
+                    <div><dt>Student ID</dt><dd>{assignment.studentId}</dd></div>
+                    <div><dt>Peer pod</dt><dd>{assignment.pod}</dd></div>
+                    <div><dt>Assignment</dt><dd>{assignment.topicId}</dd></div>
                   </dl>
+                  <p className="privacy-note">Authoritative register loaded · access code cleared from this page</p>
                   <ExternalAction href={forms.onboarding}>Confirm my details</ExternalAction>
                 </article>
-                <article className={`topic-assignment ${selectedTopic ? sectionColours[selectedTopic.id.slice(0, 2)] : "muted"}`}>
-                  <p className="eyebrow">{selectedTopic?.section ?? "Topic assignment pending"}</p>
-                  <h2>{selectedTopic?.question ?? "The facilitator will run the topic draw after the pod plan is final."}</h2>
-                  {selectedTopic && (
-                    <div className="topic-boundary">
-                      <span>{selectedTopic.id}</span>
-                      <p>Default sample: 12–25 public artifacts. Describe what is visible; do not infer intent, effect, legality or population-wide prevalence.</p>
-                    </div>
-                  )}
+                <article className={`topic-assignment ${sectionColours[assignment.topicId.slice(0, 2)] ?? "muted"}`}>
+                  <p className="eyebrow">{assignment.section}</p><h2>{assignment.question}</h2>
+                  <div className="topic-boundary"><span>{assignment.topicId}</span><p>Default sample: 12–25 public artifacts. Describe what is visible; do not infer intent, effect, legality or population-wide prevalence.</p></div>
                 </article>
+              </div>
+
+              <div className="pod-card">
+                <div><p className="eyebrow">Peer review group</p><h2>{assignment.pod} · your methodological critics</h2></div>
+                <div className="peer-list">{assignment.peers.map((peer) => <span key={peer.id}><strong>{peer.id}</strong>{peer.name}</span>)}</div>
               </div>
 
               <div className="section-heading compact">
@@ -564,17 +317,16 @@ export default function Home() {
               </div>
               <div className="checkpoint-list">
                 {gates.map(([id, title, description]) => {
-                  const isReady = (readyGates[selectedStudent.id] ?? []).includes(id);
+                  const isReady = readyGates.includes(id);
                   return (
                     <article key={id} className={isReady ? "checkpoint ready" : "checkpoint"}>
-                      <div className="checkpoint-code">{id}</div>
-                      <div><h3>{title}</h3><p>{description}</p></div>
+                      <div className="checkpoint-code">{id}</div><div><h3>{title}</h3><p>{description}</p></div>
                       <button type="button" onClick={() => toggleReady(id)}>{isReady ? "Ready ✓" : "Mark ready"}</button>
                     </article>
                   );
                 })}
               </div>
-              <p className="local-note">Readiness marks are a private device aid. The Google milestone form is the authoritative workshop record.</p>
+              <p className="local-note">Readiness marks disappear when this assignment is forgotten. The Google milestone form is the authoritative workshop record.</p>
             </>
           )}
         </section>
@@ -584,21 +336,18 @@ export default function Home() {
         <section className="view">
           <div className="section-heading">
             <div><p className="eyebrow">Edited-volume architecture</p><h1>Eight conversations. Ten studies in each.</h1></div>
-            <p>Every question is a starting boundary—not a conclusion waiting to be confirmed.</p>
+            <p>The bank is public so students can see the volume&apos;s conversation. Only the locked private register assigns authorship.</p>
           </div>
           <div className="filter-row" role="group" aria-label="Filter topic sections">
             <button className={topicFilter === "ALL" ? "active" : ""} onClick={() => setTopicFilter("ALL")}>All 80</button>
             {topicSections.map((section) => (
-              <button key={section.code} className={topicFilter === section.code ? "active" : ""} onClick={() => setTopicFilter(section.code)}>
-                {section.code} · {section.short}
-              </button>
+              <button key={section.code} className={topicFilter === section.code ? "active" : ""} onClick={() => setTopicFilter(section.code)}>{section.code} · {section.short}</button>
             ))}
           </div>
           <div className="topic-grid">
             {filteredTopics.map((topic) => (
               <article key={topic.id} className={`topic-card ${sectionColours[topic.id.slice(0, 2)]}`}>
-                <div><span>{topic.id}</span><small>{topic.sectionShort}</small></div>
-                <h3>{topic.question}</h3>
+                <div><span>{topic.id}</span><small>{topic.sectionShort}</small></div><h3>{topic.question}</h3>
                 <p>Public artifacts · structured coding · descriptive inference</p>
               </article>
             ))}
@@ -618,88 +367,10 @@ export default function Home() {
           </div>
           <div className="agent-stage-list">
             {agentStages.map((stage) => (
-              <details key={stage.id}>
-                <summary><span>{stage.gate}</span><div><h3>{stage.title}</h3><p>{stage.purpose}</p></div><b>＋</b></summary>
+              <details key={stage.id}><summary><span>{stage.gate}</span><div><h3>{stage.title}</h3><p>{stage.purpose}</p></div><b>＋</b></summary>
                 <div className="prompt-body"><pre>{stage.prompt}</pre><CopyButton text={`${agentContract}\n\n${workOrder}\n\n${stage.prompt}`} label="Copy complete prompt" /></div>
               </details>
             ))}
-          </div>
-        </section>
-      )}
-
-      {view === "facilitator" && (
-        <section className="view facilitator-view">
-          <div className="section-heading">
-            <div><p className="eyebrow">Facilitator control room</p><h1>Shape the pods. Then run one reproducible draw.</h1></div>
-            <div className="metric-pair"><span><strong>{roster.length}</strong> students</span><span><strong>{podGroups.length}</strong> pods</span><span><strong>{assignedCount}</strong> assigned</span></div>
-          </div>
-
-          <div className="notice"><strong>Prototype roster:</strong> placeholder names and invalid email addresses are deliberate. Import the final roster before the workshop. Browser storage is not the official record.</div>
-
-          <div className="control-grid">
-            <article className="control-card">
-              <p className="step-label">Step 1 · Roster</p>
-              <h2>Import the students</h2>
-              <p>CSV headers: <code>student_id,name,email</code>. Maximum 80.</p>
-              <div className="button-row">
-                <label className="button file-button">Import CSV<input type="file" accept=".csv,text/csv" onChange={(event) => event.target.files?.[0] && importRoster(event.target.files[0])} /></label>
-                <button className="text-link" type="button" onClick={resetRoster}>Restore placeholders</button>
-              </div>
-            </article>
-            <article className="control-card">
-              <p className="step-label">Step 2 · Pods</p>
-              <h2>Choose the peer-review groups</h2>
-              <div className="inline-control"><label>Target size<input type="number" min="2" max="10" value={podTarget} onChange={(event) => setPodTarget(Number(event.target.value))} /></label><button className="button" type="button" onClick={rebalancePods}>Rebalance</button></div>
-              <label>Exact pod sizes<input value={podPlan} onChange={(event) => setPodPlan(event.target.value)} /></label>
-              <button className="text-link" type="button" onClick={applyPodPlan}>Apply exact plan →</button>
-            </article>
-            <article className="control-card accent-control">
-              <p className="step-label">Step 3 · Assignment</p>
-              <h2>Run the topic draw</h2>
-              <label>Assignment seed<input value={seed} onChange={(event) => setSeed(event.target.value)} /></label>
-              <div className="button-row"><button className="button primary" type="button" onClick={assignTopics}>Assign all topics</button><button className="text-link" type="button" onClick={clearAssignments}>Clear</button></div>
-            </article>
-          </div>
-          {assignmentMessage && <div className="notice status" role="status">{assignmentMessage}</div>}
-
-          <div className="pod-strip">
-            {podGroups.map((pod) => {
-              const section = pod.students[0]?.topicId?.slice(0, 2);
-              return <div key={pod.id}><strong>{pod.id}</strong><span>{pod.students.length} students</span><small>{section ? topicSections.find((item) => item.code === section)?.short : "Not assigned"}</small></div>;
-            })}
-          </div>
-
-          <div className="roster-panel">
-            <div className="roster-toolbar"><div><p className="eyebrow">Working roster</p><h2>Student-level assignment register</h2></div><div><input aria-label="Search roster" placeholder="Search roster" value={studentSearch} onChange={(event) => setStudentSearch(event.target.value)} /><button className="button" type="button" onClick={exportAssignments}>Export CSV</button></div></div>
-            <div className="table-wrap">
-              <table>
-                <thead><tr><th>Student</th><th>Email</th><th>Pod</th><th>Study</th><th>Question</th></tr></thead>
-                <tbody>
-                  {filteredRoster.map((student) => {
-                    const topic = student.topicId ? topicById.get(student.topicId) : undefined;
-                    return (
-                      <tr key={student.id}>
-                        <td><strong>{student.name}</strong><small>{student.id}</small></td>
-                        <td>{student.email}</td>
-                        <td><select value={student.pod} onChange={(event) => setRoster((current) => current.map((item) => item.id === student.id ? { ...item, pod: event.target.value, topicId: undefined } : item))}>{Array.from({ length: 24 }, (_, index) => <option key={index} value={`P${String(index + 1).padStart(2, "0")}`}>P{String(index + 1).padStart(2, "0")}</option>)}</select></td>
-                        <td><span className={`topic-code ${topic ? sectionColours[topic.id.slice(0, 2)] : "muted"}`}>{topic?.id ?? "—"}</span></td>
-                        <td>{topic?.question ?? "Awaiting assignment"}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="forms-panel">
-            <div><p className="eyebrow">Private Google layer</p><h2>Submission links</h2><p>These URLs are kept in this browser for setup. Student responses belong in the facilitator-owned Google Sheet—not in GitHub.</p></div>
-            <div className="form-fields">
-              {(Object.keys(forms) as (keyof FormLinks)[]).map((key) => (
-                <label key={key}>{key === "onboarding" ? "Student details form" : key === "milestone" ? "Milestone check-in form" : "Final manuscript form"}<input type="url" placeholder="https://forms.gle/…" value={forms[key]} onChange={(event) => setForms((current) => ({ ...current, [key]: event.target.value }))} /></label>
-              ))}
-              <button className="button" type="button" onClick={() => downloadText("RMWUG2026-form-links.json", JSON.stringify(forms, null, 2), "application/json")}>Export link configuration</button>
-            </div>
           </div>
         </section>
       )}
@@ -712,8 +383,7 @@ export default function Home() {
           </div>
           <div className="publication-grid">
             <article className="manuscript-card">
-              <span className="folio">700–900 words</span>
-              <h2>Required manuscript</h2>
+              <span className="folio">700–900 words</span><h2>Required manuscript</h2>
               <ol>
                 <li><strong>Title and byline</strong><span>Study ID, author, programme and pod</span></li>
                 <li><strong>Abstract</strong><span>Question, sample, method, main result and limit</span></li>
@@ -741,7 +411,7 @@ export default function Home() {
 
       <footer>
         <p><strong>RMWUG 2026</strong> · Research Methods by Vinay Chaganti · St Mary&apos;s, Hyderabad</p>
-        <p>Public guidance layer · Student submissions remain in private Google Workspace files</p>
+        <p>Public guidance layer · Roster, assignments and submissions remain in the private facilitator workspace</p>
       </footer>
     </main>
   );

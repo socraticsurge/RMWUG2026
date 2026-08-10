@@ -6,20 +6,19 @@ The workshop is designed to produce 80 individually authored, artifact-based Com
 
 ## What the app does
 
-- gives students their study question, pod and seven research checkpoints;
+- gives each student their locked study question, pod and seven research checkpoints after a personal access-code lookup;
 - provides stage-specific AI-agent work orders and safety instructions;
-- lets the facilitator import a roster and adjust pod sizes;
-- performs a seeded, reproducible one-click topic assignment;
+- keeps roster import, pod changes, assignment and access-card actions in the private facilitator Sheet;
+- supports a seeded, reproducible one-click draw with explicit draft and locked states;
 - guarantees unique topics and keeps each pod within one editorial section;
-- exports the assignment register as CSV;
 - links students to private Google Forms for details, milestones and final submission; and
 - publishes the complete method, workbook and editorial standards as Markdown.
 
 ## Privacy boundary
 
-This repository and GitHub Pages site are public. **Do not commit the real student roster, email addresses, milestone responses, datasets or manuscripts.** The included roster uses deliberately invalid placeholder addresses. Google Forms, Sheets and Drive are the private record layer.
+This repository and GitHub Pages site are public. **Do not commit the real student roster, email addresses, access codes, milestone responses, datasets or manuscripts.** Google Forms, Sheets, Apps Script and Drive are the private record/control layer.
 
-Browser storage is used only for facilitator setup convenience and students' local readiness marks; it is not an authoritative workshop record.
+The public app contains no facilitator screen or roster. A successful Apps Script lookup returns only one locked assignment and that student's pod-member names. Access codes, the whole register and email addresses remain in the protected Sheet. Student readiness marks are ephemeral device aids; the Google milestone Form is authoritative.
 
 ## Run locally
 
@@ -42,22 +41,25 @@ npm test
 
 `npm run build:pages` writes the GitHub Pages artifact to `.next-pages/`. A push to `main` triggers `.github/workflows/deploy-pages.yml`.
 
-## Roster format
+## Private facilitator journey
 
-Import a UTF-8 CSV with these headers:
+Use the owner-only Sheet and its `RMWUG Control` menu:
 
-```csv
-student_id,name,email
-S001,Student Name,student@example.edu
-```
+1. replace the placeholder roster;
+2. set pods and validate;
+3. generate missing access codes;
+4. run the reproducible draft draw;
+5. review and lock assignments once; and
+6. privately issue one access card per student.
 
-The roster must contain no more than 80 students. Topic assignment happens only after the facilitator has reviewed the pod plan.
+Pod size five is preferred; two to ten is supported. The roster must contain no more than 80 students.
 
 ## Repository map
 
-- `app/page.tsx` — student and facilitator interface
-- `app/data/topics.ts` — 80-topic bank used by the assignment engine
+- `app/page.tsx` — public student interface and one-student lookup client
+- `app/data/topics.ts` — public 80-topic volume map
 - `app/data/agentInstructions.ts` — copyable agent protocol
+- `facilitator-apps-script/` — auditable source for the private Sheet-bound control plane and lookup service
 - `public/guides/` — complete Markdown method and publishing kit
 - `public/og.png` — social preview card
 - `.github/workflows/deploy-pages.yml` — GitHub Pages deployment

@@ -49,7 +49,7 @@ If eight section editors are unavailable, use four editors covering two sections
 
 ## Topic allocation
 
-Allocate topics before the workshop when possible. The central register should contain:
+Allocate topics through the private control Sheet before students inspect the bank in detail. The public topic bank is a volume map, not an assignment register. The central register should contain:
 
 | Field | Purpose |
 |---|---|
@@ -63,6 +63,8 @@ Allocate topics before the workshop when possible. The central register should c
 | Reason for change | Audit trail |
 
 Students may refine a topic but should not enter an unrestricted topic marketplace during the workshop.
+
+Use one reproducible seeded draw after the roster and pod plan have passed validation. Review the draft centrally, then lock it once. Issue each student a personal access card; do not publish the whole assignment register. A lost or shared card triggers rotation of that student's code, not a new draw.
 
 ## Suggested 7.5-hour run of show
 
@@ -230,5 +232,4 @@ Report separately:
 - public release status.
 
 Do not report “80 papers published” when 80 topics were merely assigned or compiled into a private draft.
-
 
