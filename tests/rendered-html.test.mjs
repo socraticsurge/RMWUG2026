@@ -3,7 +3,7 @@ import { access, readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
 async function render() {
-  const html = await readFile(new URL("../out/index.html", import.meta.url), "utf8");
+  const html = await readFile(new URL("../.next-pages/index.html", import.meta.url), "utf8");
   return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
 }
 

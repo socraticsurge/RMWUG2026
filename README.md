@@ -40,7 +40,7 @@ npm run build:pages
 npm test
 ```
 
-`npm run build:pages` writes the GitHub Pages artifact to `out/`. A push to `main` triggers `.github/workflows/deploy-pages.yml`.
+`npm run build:pages` writes the GitHub Pages artifact to `.next-pages/`. A push to `main` triggers `.github/workflows/deploy-pages.yml`.
 
 ## Roster format
 
