@@ -56,7 +56,7 @@ const defaultForms: FormLinks = {
 
 // Set to the deployed Apps Script /exec URL. It contains no secret; access
 // codes are high-entropy bearer credentials stored only in the private Sheet.
-const lookupService = "";
+const lookupService = "https://script.google.com/macros/s/AKfycbwcd_gv73gwxIZ8AaRbFybUxs3pxSaOFiJCqXGzHvuG_I2adD_-mQYVze-9ase83uZV/exec";
 
 function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false);
@@ -203,6 +203,15 @@ export default function Home() {
         </nav>
         <ExternalAction href={forms.milestone}>Check in</ExternalAction>
       </header>
+
+      <aside className="dry-run-banner" aria-label="Dry-run operating mode">
+        <div><strong>Dry run</strong><span>6 mock students · 2 pods · isolated control data</span></div>
+        <p>Use a private window when changing roles. Label every Google Form response <b>DRY RUN</b>.</p>
+        <div className="dry-run-actions">
+          <button type="button" onClick={() => setView("study")}>Act as a student</button>
+          <GuideLink file="13_DRY_RUN_REHEARSAL.md">Rehearsal script</GuideLink>
+        </div>
+      </aside>
 
       {view === "overview" && (
         <section className="view overview-view">

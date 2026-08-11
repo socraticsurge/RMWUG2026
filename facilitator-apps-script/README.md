@@ -23,4 +23,11 @@ Operational sequence:
 7. Give each student only their own card.
 8. Rotate one code if it is lost or shared.
 
+Dry-run isolation:
+
+- `Operating mode = DRY RUN` routes roster, pod, assignment, access-card and audit operations to protected `Dry Run …` tabs.
+- `Dry Run assignment state` and `Dry Run assignment seed` are independent of production state and seed.
+- `Run dry-run self-test` checks a rejected token, a valid one-student response, the three-person peer pod and absence of email/token fields without printing an access code.
+- Switch `Operating mode` to `LIVE` only after the rehearsal, wait ten seconds, and confirm the production state before issuing real cards.
+
 Deploy the bound script as a web app executing as the owner and available to anyone. The access code—not the public URL—is the bearer credential. Copy the `/exec` deployment URL into both the `Lookup service` setting and the public app configuration.

@@ -54,6 +54,12 @@ Use the owner-only Sheet and its `RMWUG Control` menu:
 
 Pod size five is preferred; two to ten is supported. The roster must contain no more than 80 students.
 
+## Current rehearsal mode
+
+The private control workbook is currently set to `DRY RUN`. Six disposable mock records live in protected `Dry Run …` tabs as two pods of three; the production 80-student placeholder tabs are unchanged. Use `public/guides/13_DRY_RUN_REHEARSAL.md` and the private `Dry Run` checklist to alternate between facilitator and student roles.
+
+Before loading the real roster, set `Operating mode` to `LIVE`, wait ten seconds for the short mode cache to expire, and confirm that the production `Assignment state` is `NOT STARTED`.
+
 ## Repository map
 
 - `app/page.tsx` — public student interface and one-student lookup client

@@ -18,8 +18,12 @@ const RMWUG = Object.freeze({
     cards: "Access Cards",
     audit: "Audit Log",
   },
+  operatingModeKey: "Operating mode",
   stateKey: "Assignment state",
+  dryRunStateKey: "Dry Run assignment state",
+  dryRunSeedKey: "Dry Run assignment seed",
   deploymentKey: "Lookup service",
+  structureVersion: "2026-08-11-dry-run-v1",
   locked: "LOCKED",
   draft: "DRAFT",
   open: "NOT STARTED",
@@ -37,6 +41,7 @@ function onOpen() {
     .addItem("Run draft topic draw", "menuRunDraftDraw")
     .addItem("Lock and publish assignments", "menuLockAssignments")
     .addItem("Build printable access cards", "menuBuildAccessCards")
+    .addItem("Run dry-run self-test", "menuRunDryRunSelfTest")
     .addToUi();
 }
 
@@ -68,6 +73,10 @@ function menuBuildAccessCards() {
   showMenuResult_(buildAccessCards());
 }
 
+function menuRunDryRunSelfTest() {
+  showMenuResult_(runDryRunSelfTest());
+}
+
 function showMenuResult_(result) {
   SpreadsheetApp.getUi().alert(result.ok ? "RMWUG" : "RMWUG needs attention", result.message, SpreadsheetApp.getUi().ButtonSet.OK);
 }
@@ -77,9 +86,10 @@ function getControlState() {
   const roster = readTable_(RMWUG.sheets.roster);
   const assignments = readTable_(RMWUG.sheets.assignments);
   const access = readTable_(RMWUG.sheets.access);
-  const state = getSetting_(RMWUG.stateKey) || RMWUG.open;
+  const state = getSetting_(stateSettingKey_()) || RMWUG.open;
   return {
     ok: true,
+    mode: operatingMode_(),
     state: state,
     rosterCount: roster.length,
     placeholderCount: roster.filter(function (row) { return String(row["Roster Status"]).toUpperCase() === "PLACEHOLDER"; }).length,
@@ -183,7 +193,7 @@ function generateMissingAccessCodes() {
 
 function runDraftTopicDraw() {
   ensureControlStructure_();
-  const state = getSetting_(RMWUG.stateKey) || RMWUG.open;
+  const state = getSetting_(stateSettingKey_()) || RMWUG.open;
   if (state === RMWUG.locked) {
     return { ok: false, message: "Assignments are locked. Unlock explicitly before replacing the authoritative draw." };
   }
@@ -192,7 +202,7 @@ function runDraftTopicDraw() {
 
   const roster = readTable_(RMWUG.sheets.roster);
   const topics = readTable_(RMWUG.sheets.topics);
-  const seed = String(getSetting_("Assignment seed") || "RMWUG2026-01").trim();
+  const seed = String(getSetting_(seedSettingKey_()) || (isDryRun_() ? "RMWUG2026-DRYRUN-01" : "RMWUG2026-01")).trim();
   const random = seededRandom_(seed);
   const podsById = {};
   roster.forEach(function (student) {
@@ -233,7 +243,7 @@ function runDraftTopicDraw() {
   const podSheet = getSheet_(RMWUG.sheets.pods);
   const podRows = pods.map(function (pod) { return [pod.id, pod.students.length, pod.students.length, sectionByPod[pod.id], "Draft draw; review before lock"]; });
   replaceBody_(podSheet, podRows, 5);
-  setSetting_(RMWUG.stateKey, RMWUG.draft, "Only LOCKED assignments are returned to students");
+  setSetting_(stateSettingKey_(), RMWUG.draft, activeStatePurpose_());
   generateMissingAccessCodes();
   writeAudit_("TOPIC_DRAW", "DRAFT", "Created " + rows.length + " unique assignments with seed " + seed + ".");
   return Object.assign(getControlState(), { ok: true, message: "Draft draw created for " + rows.length + " students. Review Assignments and Pod Plan, then lock once." });
@@ -241,7 +251,7 @@ function runDraftTopicDraw() {
 
 function lockAssignments() {
   ensureControlStructure_();
-  const state = getSetting_(RMWUG.stateKey) || RMWUG.open;
+  const state = getSetting_(stateSettingKey_()) || RMWUG.open;
   if (state === RMWUG.locked) return Object.assign(getControlState(), { ok: true, message: "Assignments are already locked." });
   const assignments = readTable_(RMWUG.sheets.assignments);
   const roster = readTable_(RMWUG.sheets.roster);
@@ -257,7 +267,7 @@ function lockAssignments() {
     sheet.getRange(2, 9, sheet.getLastRow() - 1, 1).setValue(RMWUG.locked);
     sheet.getRange(2, 10, sheet.getLastRow() - 1, 1).setValue(now);
   }
-  setSetting_(RMWUG.stateKey, RMWUG.locked, "Only LOCKED assignments are returned to students");
+  setSetting_(stateSettingKey_(), RMWUG.locked, activeStatePurpose_());
   buildAccessCards();
   writeAudit_("ASSIGNMENTS", "LOCKED", "Locked " + assignments.length + " assignments at " + now.toISOString() + ".");
   return Object.assign(getControlState(), { ok: true, message: "Assignments are locked and available through valid student access codes." });
@@ -267,7 +277,7 @@ function unlockAssignments(confirmation) {
   if (String(confirmation || "").trim().toUpperCase() !== "UNLOCK") {
     return Object.assign(getControlState(), { ok: false, message: "No change made. Type UNLOCK exactly to reopen the draw." });
   }
-  setSetting_(RMWUG.stateKey, RMWUG.draft, "Only LOCKED assignments are returned to students");
+  setSetting_(stateSettingKey_(), RMWUG.draft, activeStatePurpose_());
   const sheet = getSheet_(RMWUG.sheets.assignments);
   if (sheet.getLastRow() > 1) {
     sheet.getRange(2, 9, sheet.getLastRow() - 1, 1).setValue(RMWUG.draft);
@@ -351,7 +361,8 @@ function doGet(event) {
 
 function lookupAssignment_(studentId, token) {
   const genericFailure = { ok: false, code: "NOT_FOUND", message: "The details do not match an available assignment. Check the access card or ask the facilitator." };
-  if ((getSetting_(RMWUG.stateKey) || RMWUG.open) !== RMWUG.locked) {
+  const settings = readSettingsMap_();
+  if ((settingFromMap_(settings, stateSettingKey_()) || RMWUG.open) !== RMWUG.locked) {
     return { ok: false, code: "NOT_OPEN", message: "The facilitator has not opened the authoritative assignment register yet." };
   }
   const id = normalizeId_(studentId);
@@ -408,9 +419,9 @@ function lookupAssignment_(studentId, token) {
         question: String(assignment["Research Question"] || ""),
         peers: peers,
         forms: {
-          onboarding: String(getSetting_("Onboarding form") || ""),
-          milestone: String(getSetting_("Milestone form") || ""),
-          submission: String(getSetting_("Final submission form") || ""),
+          onboarding: String(settingFromMap_(settings, "Onboarding form") || ""),
+          milestone: String(settingFromMap_(settings, "Milestone form") || ""),
+          submission: String(settingFromMap_(settings, "Final submission form") || ""),
         },
       },
     };
@@ -419,13 +430,40 @@ function lookupAssignment_(studentId, token) {
   }
 }
 
+function runDryRunSelfTest() {
+  ensureControlStructure_();
+  if (!isDryRun_()) return Object.assign(getControlState(), { ok: false, message: "Switch Operating mode to DRY RUN before running this test." });
+  if ((getSetting_(stateSettingKey_()) || RMWUG.open) !== RMWUG.locked) {
+    return Object.assign(getControlState(), { ok: false, message: "Lock the dry-run draw before testing lookup." });
+  }
+  const access = readTable_(RMWUG.sheets.access);
+  if (!access.length || !access[0]["Access Code"]) return Object.assign(getControlState(), { ok: false, message: "Generate the six dry-run access codes first." });
+  const id = normalizeId_(access[0]["Student ID"]);
+  const denied = lookupAssignment_(id, "RMWUG-DELIBERATE-WRONG-CODE");
+  const valid = lookupAssignment_(id, access[0]["Access Code"]);
+  const assignment = valid.assignment || {};
+  const serialized = JSON.stringify(valid);
+  const noPrivateFields = serialized.indexOf("Google Email") < 0 && serialized.indexOf("Access Code") < 0 && serialized.indexOf("mailinator.com") < 0;
+  const peers = assignment.peers || [];
+  const passed = !denied.ok && valid.ok && assignment.studentId === id && peers.length === 3 && noPrivateFields;
+  const detail = passed
+    ? "Invalid token denied; valid token returned one assignment and three peer names without email or token fields."
+    : "Lookup contract failed. Review the dry-run registers and doGet response before continuing.";
+  writeAudit_("DRY_RUN_SELF_TEST", passed ? "PASS" : "FAIL", detail);
+  return Object.assign(getControlState(), { ok: passed, message: passed ? "Dry-run lookup contract passed without exposing private fields." : detail });
+}
+
 function ensureControlStructure_() {
+  const properties = PropertiesService.getScriptProperties();
+  const structureKey = "RMWUG_STRUCTURE_" + RMWUG.structureVersion + "_" + operatingMode_().replace(/\s+/g, "_");
+  if (properties.getProperty(structureKey) === "READY") return;
   const spreadsheet = SpreadsheetApp.openById(RMWUG.spreadsheetId);
-  ensureSheet_(spreadsheet, RMWUG.sheets.access, ["Student ID", "Name", "Access Code", "Token Status", "Issued At", "Last Used", "Failed Attempts", "Last Failed", "Token Preview"]);
-  ensureSheet_(spreadsheet, RMWUG.sheets.cards, ["Student ID", "Name", "Pod", "Topic ID", "Access Code", "Public App", "Issue Note"]);
-  ensureSheet_(spreadsheet, RMWUG.sheets.audit, ["Timestamp", "Actor", "Event", "Status", "Detail"]);
+  ensureSheet_(spreadsheet, resolvedSheetName_(RMWUG.sheets.access), ["Student ID", "Name", "Access Code", "Token Status", "Issued At", "Last Used", "Failed Attempts", "Last Failed", "Token Preview"]);
+  ensureSheet_(spreadsheet, resolvedSheetName_(RMWUG.sheets.cards), ["Student ID", "Name", "Pod", "Topic ID", "Access Code", "Public App", "Issue Note"]);
+  ensureSheet_(spreadsheet, resolvedSheetName_(RMWUG.sheets.audit), ["Timestamp", "Actor", "Event", "Status", "Detail"]);
   ensureHeaders_(getSheet_(RMWUG.sheets.assignments), ["Student ID", "Name", "Google Email", "Pod", "Section", "Topic ID", "Research Question", "Assignment Seed", "Status", "Locked At"]);
-  if (!getSetting_(RMWUG.stateKey)) setSetting_(RMWUG.stateKey, RMWUG.open, "Only LOCKED assignments are returned to students");
+  if (!getSetting_(stateSettingKey_())) setSetting_(stateSettingKey_(), RMWUG.open, activeStatePurpose_());
+  properties.setProperty(structureKey, "READY");
 }
 
 function ensureSheet_(spreadsheet, name, headers) {
@@ -457,9 +495,51 @@ function protectPrivateSheet_(sheet, description) {
 }
 
 function getSheet_(name) {
-  const sheet = SpreadsheetApp.openById(RMWUG.spreadsheetId).getSheetByName(name);
-  if (!sheet) throw new Error("Missing sheet: " + name);
+  const resolvedName = resolvedSheetName_(name);
+  const sheet = SpreadsheetApp.openById(RMWUG.spreadsheetId).getSheetByName(resolvedName);
+  if (!sheet) throw new Error("Missing sheet: " + resolvedName);
   return sheet;
+}
+
+function operatingMode_() {
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get("RMWUG_OPERATING_MODE");
+  if (cached) return cached;
+  const spreadsheet = SpreadsheetApp.openById(RMWUG.spreadsheetId);
+  const sheet = spreadsheet.getSheetByName(RMWUG.sheets.settings);
+  if (!sheet || sheet.getLastRow() < 2) return "LIVE";
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getDisplayValues();
+  for (let index = 0; index < values.length; index += 1) {
+    if (String(values[index][0] || "").trim().toLowerCase() === RMWUG.operatingModeKey.toLowerCase()) {
+      const mode = String(values[index][1] || "LIVE").trim().toUpperCase() === "DRY RUN" ? "DRY RUN" : "LIVE";
+      cache.put("RMWUG_OPERATING_MODE", mode, 10);
+      return mode;
+    }
+  }
+  return "LIVE";
+}
+
+function isDryRun_() {
+  return operatingMode_() === "DRY RUN";
+}
+
+function resolvedSheetName_(name) {
+  const isolated = [RMWUG.sheets.roster, RMWUG.sheets.pods, RMWUG.sheets.assignments, RMWUG.sheets.access, RMWUG.sheets.cards, RMWUG.sheets.audit];
+  return isDryRun_() && isolated.indexOf(name) >= 0 ? "Dry Run " + name : name;
+}
+
+function stateSettingKey_() {
+  return isDryRun_() ? RMWUG.dryRunStateKey : RMWUG.stateKey;
+}
+
+function seedSettingKey_() {
+  return isDryRun_() ? RMWUG.dryRunSeedKey : "Assignment seed";
+}
+
+function activeStatePurpose_() {
+  return isDryRun_()
+    ? "Isolated six-student rehearsal; does not alter the production assignment state"
+    : "Only LOCKED assignments are returned to students";
 }
 
 function readTable_(name) {
@@ -496,11 +576,21 @@ function headerMap_(headers) {
 }
 
 function getSetting_(key) {
+  return settingFromMap_(readSettingsMap_(), key);
+}
+
+function readSettingsMap_() {
   const values = getSheet_(RMWUG.sheets.settings).getDataRange().getValues();
+  const settings = {};
   for (let index = 1; index < values.length; index += 1) {
-    if (String(values[index][0] || "").trim().toLowerCase() === String(key).trim().toLowerCase()) return values[index][1];
+    const key = String(values[index][0] || "").trim().toLowerCase();
+    if (key) settings[key] = values[index][1];
   }
-  return "";
+  return settings;
+}
+
+function settingFromMap_(settings, key) {
+  return settings[String(key || "").trim().toLowerCase()] || "";
 }
 
 function setSetting_(key, value, purpose) {
@@ -631,7 +721,7 @@ function getControlPanelHtml_() {
   return `<!doctype html><html><head><base target="_top"><style>
     body{font:14px/1.45 Arial,sans-serif;margin:0;color:#112a46;background:#f5f2ec}.wrap{padding:18px}.eyebrow{font-size:10px;font-weight:800;letter-spacing:.15em;color:#bd5c42}h1{font:700 26px/1.08 Georgia,serif;margin:4px 0 8px}.lede{color:#5d6c7b;margin:0 0 16px}.state{background:#112a46;color:white;border-radius:14px;padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:9px}.state b{display:block;font-size:20px}.state small{color:#bed0df}.banner{grid-column:1/-1;border-top:1px solid #ffffff30;padding-top:9px}.actions{display:grid;gap:8px;margin:14px 0}.actions button{border:0;border-radius:10px;padding:11px 12px;background:white;color:#112a46;text-align:left;font-weight:700;cursor:pointer;box-shadow:0 2px 9px #112a4610}.actions button.primary{background:#bf5b3f;color:white}.danger{margin-top:14px;padding-top:12px;border-top:1px solid #d6d0c6}.row{display:flex;gap:7px}.row input{min-width:0;flex:1;padding:9px;border:1px solid #c8c2b8;border-radius:8px}.row button{padding:9px;border:0;border-radius:8px;background:#112a46;color:#fff}.status{background:#fff;border-left:4px solid #d9a72f;padding:10px;margin-top:12px;white-space:pre-wrap}.issues{font-size:12px;color:#7b352a;padding-left:18px}.muted{font-size:11px;color:#6c7884}.busy{opacity:.55;pointer-events:none}</style></head><body><div class="wrap"><p class="eyebrow">OWNER-ONLY CONTROL PLANE</p><h1>RMWUG 2026</h1><p class="lede">Review, draw, lock, issue. Students never see this panel or the registers behind it.</p><div id="state" class="state"><div class="banner">Loading…</div></div><div class="actions" id="actions"><button onclick="run('validateWorkshop')">1 · Validate roster and pods</button><button onclick="run('generateMissingAccessCodes')">2 · Generate missing access codes</button><button onclick="run('runDraftTopicDraw')">3 · Run reproducible draft draw</button><button class="primary" onclick="run('lockAssignments')">4 · Lock and publish assignments</button><button onclick="run('buildAccessCards')">5 · Build printable access cards</button></div><div class="danger"><p class="muted"><b>Lost or shared code</b> — rotate one student only.</p><div class="row"><input id="student" placeholder="S001"><button onclick="callWith('rotateStudentAccessCode','student')">Rotate</button></div><p class="muted"><b>Reopen a locked draw</b> — pauses every student lookup. Type UNLOCK.</p><div class="row"><input id="unlock" placeholder="UNLOCK"><button onclick="callWith('unlockAssignments','unlock')">Reopen</button></div></div><div id="status" class="status">Ready.</div><ul id="issues" class="issues"></ul></div><script>
   function busy(on){document.getElementById('actions').className=on?'actions busy':'actions'}
-  function render(r){busy(false);document.getElementById('state').innerHTML='<div><b>'+r.rosterCount+'</b><small>students</small></div><div><b>'+r.podCount+'</b><small>pods</small></div><div><b>'+r.assignmentCount+'</b><small>assigned</small></div><div><b>'+r.accessCount+'</b><small>codes</small></div><div class="banner"><b>'+r.state+'</b><small>assignment state</small></div>';document.getElementById('status').textContent=r.message||'Complete.';document.getElementById('issues').innerHTML=(r.issues||[]).slice(0,8).map(function(x){return '<li>'+String(x).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]})+'</li>'}).join('')}
+  function render(r){busy(false);document.getElementById('state').innerHTML='<div><b>'+r.rosterCount+'</b><small>students</small></div><div><b>'+r.podCount+'</b><small>pods</small></div><div><b>'+r.assignmentCount+'</b><small>assigned</small></div><div><b>'+r.accessCount+'</b><small>codes</small></div><div class="banner"><b>'+r.mode+' · '+r.state+'</b><small>operating mode · assignment state</small></div>';document.getElementById('status').textContent=r.message||'Complete.';document.getElementById('issues').innerHTML=(r.issues||[]).slice(0,8).map(function(x){return '<li>'+String(x).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]})+'</li>'}).join('')}
   function fail(e){busy(false);document.getElementById('status').textContent='Error: '+(e.message||e)}
   function run(name){busy(true);google.script.run.withSuccessHandler(render).withFailureHandler(fail)[name]()}
   function callWith(name,id){busy(true);google.script.run.withSuccessHandler(render).withFailureHandler(fail)[name](document.getElementById(id).value)}

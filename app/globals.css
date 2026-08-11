@@ -70,6 +70,69 @@ button {
   backdrop-filter: blur(16px);
 }
 
+.dry-run-banner {
+  align-items: center;
+  background: var(--ink);
+  color: var(--white);
+  display: grid;
+  gap: 22px;
+  grid-template-columns: auto 1fr auto;
+  padding: 12px max(24px, calc((100vw - 1360px) / 2));
+}
+
+.dry-run-banner > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.dry-run-banner strong {
+  color: var(--amber);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.dry-run-banner span,
+.dry-run-banner p,
+.dry-run-banner button,
+.dry-run-banner .guide-link {
+  color: var(--white);
+  font-size: 11px;
+}
+
+.dry-run-banner span {
+  font-weight: 750;
+}
+
+.dry-run-banner p {
+  margin: 0;
+  text-align: center;
+}
+
+.dry-run-banner b {
+  color: var(--amber);
+}
+
+.dry-run-actions {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+}
+
+.dry-run-actions button {
+  background: var(--coral);
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  font-weight: 800;
+  padding: 9px 13px;
+  text-transform: uppercase;
+}
+
+.dry-run-actions .guide-link span {
+  color: var(--ink);
+}
+
 .brand {
   align-items: center;
   background: none;
@@ -1456,6 +1519,20 @@ footer p {
 }
 
 @media (max-width: 820px) {
+  .dry-run-banner {
+    align-items: start;
+    grid-template-columns: 1fr;
+    padding: 16px 20px;
+  }
+
+  .dry-run-banner p {
+    text-align: left;
+  }
+
+  .dry-run-actions {
+    flex-wrap: wrap;
+  }
+
   .site-header {
     display: block;
     padding: 12px 18px;
